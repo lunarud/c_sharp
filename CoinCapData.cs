@@ -1,69 +1,136 @@
 using Moq;
 using NUnit.Framework;
-using System;
-using System.Net;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
+using System.Net.Http;
+using System.Threading.Tasks;
+using Moq.Protected;
+using System.Threading;
+using System.Net;
+using System.Net.Http.Json;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
 
-[TestFixture]
-public class WeatherServiceTests
+namespace CoinCapTests
 {
-    private Mock<IMemoryCache> _cacheMock;
-    private Mock<HttpMessageHandler> _httpMessageHandlerMock;
-    private HttpClient _httpClient;
-    private WeatherService _weatherService;
-
-    [SetUp]
-    public void Setup()
+    public class CoinCapData
     {
-        _cacheMock = new Mock<IMemoryCache>();
-
-        _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
-        _httpClient = new HttpClient(_httpMessageHandlerMock.Object);
-        _weatherService = new WeatherService(_cacheMock.Object, _httpClient);
+        public string Id { get; set; }
+        public string Symbol { get; set; }
+        public string CurrencySymbol { get; set; }
+        public decimal RateUsd { get; set; }
     }
 
-    [Test]
-    public async Task GetWeatherDataAsync_ShouldReturnCachedData_WhenCacheHit()
+    public class CoinCapResponse
     {
-        // Arrange
-        var cachedData = "Sunny";
-        _cacheMock.Setup(x => x.TryGetValue(It.IsAny<object>(), out cachedData)).Returns(true);
-
-        // Act
-        var result = await _weatherService.GetWeatherDataAsync();
-
-        // Assert
-        Assert.AreEqual(cachedData, result);
-        _cacheMock.Verify(x => x.TryGetValue(It.IsAny<object>(), out cachedData), Times.Once);
-        _httpMessageHandlerMock.VerifyNoOtherCalls();
+        public CoinCapData Data { get; set; }
     }
 
-    [Test]
-    public async Task GetWeatherDataAsync_ShouldCallApiAndCacheResponse_WhenCacheMiss()
+    [TestFixture]
+    public class CoinCapServiceTests
     {
-        // Arrange
-        var cachedData = (string)null; // No cached data
-        _cacheMock.Setup(x => x.TryGetValue(It.IsAny<object>(), out cachedData)).Returns(false);
+        private Mock<IMemoryCache> _memoryCacheMock;
+        private Mock<IHttpClientFactory> _httpClientFactoryMock;
+        private CoinCapService _service;
 
-        var apiResponseContent = new StringContent("Rainy");
-        var responseMessage = new HttpResponseMessage(HttpStatusCode.OK) { Content = apiResponseContent };
+        [SetUp]
+        public void Setup()
+        {
+            _memoryCacheMock = new Mock<IMemoryCache>();
+            _httpClientFactoryMock = new Mock<IHttpClientFactory>();
+            _service = new CoinCapService(_memoryCacheMock.Object, _httpClientFactoryMock.Object);
+        }
 
-        _httpMessageHandlerMock
-            .Setup(m => m.SendAsync(It.IsAny<HttpRequestMessage>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(responseMessage);
+        [Test]
+        public async Task GetCurrencyData_ReturnsCachedData_WhenDataExistsInCache()
+        {
+            // Arrange
+            var coinCapData = new CoinCapData { Id = "bitcoin", Symbol = "BTC", RateUsd = 50000.0M };
 
-        _cacheMock.Setup(x => x.Set(It.IsAny<object>(), It.IsAny<object>(), It.IsAny<TimeSpan>()))
-            .Returns((object key, object value, TimeSpan ts) => value);
+            object cachedData = coinCapData;
+            _memoryCacheMock.Setup(mc => mc.GetOrCreateAsync(It.IsAny<object>(), It.IsAny<Func<ICacheEntry, Task<CoinCapData>>>()))
+                            .ReturnsAsync(coinCapData);
 
-        // Act
-        var result = await _weatherService.GetWeatherDataAsync();
+            // Act
+            var result = await _service.GetCurrencyData("bitcoin");
 
-        // Assert
-        Assert.AreEqual("Rainy", result);
-        _httpMessageHandlerMock.Verify(x => x.SendAsync(It.IsAny<HttpRequestMessage>(), It.IsAny<CancellationToken>()), Times.Once);
-        _cacheMock.Verify(x => x.Set(It.IsAny<object>(), It.IsAny<object>(), It.IsAny<TimeSpan>()), Times.Once);
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.AreEqual(coinCapData, result);
+            _memoryCacheMock.Verify(mc => mc.GetOrCreateAsync(It.IsAny<object>(), It.IsAny<Func<ICacheEntry, Task<CoinCapData>>>()), Times.Once);
+        }
+
+        [Test]
+        public async Task GetCurrencyData_FetchesDataFromApiAndCaches_WhenCacheMiss()
+        {
+            // Arrange
+            var coinCapData = new CoinCapData { Id = "bitcoin", Symbol = "BTC", RateUsd = 50000.0M };
+            var coinCapResponse = new CoinCapResponse { Data = coinCapData };
+
+            var apiResponse = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonConvert.SerializeObject(coinCapResponse))
+            };
+
+            // Mock HttpClient and HttpClientFactory
+            var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
+            httpMessageHandlerMock.Protected()
+                .Setup<Task<HttpResponseMessage>>(
+                    "SendAsync",
+                    ItExpr.IsAny<HttpRequestMessage>(),
+                    ItExpr.IsAny<CancellationToken>())
+                .ReturnsAsync(apiResponse);
+
+            var httpClient = new HttpClient(httpMessageHandlerMock.Object);
+            _httpClientFactoryMock.Setup(factory => factory.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+            // Mock cache miss by returning null for GetOrCreateAsync
+            CoinCapData cachedData = null;
+            _memoryCacheMock.Setup(mc => mc.GetOrCreateAsync(It.IsAny<object>(), It.IsAny<Func<ICacheEntry, Task<CoinCapData>>>()))
+                            .Returns<ICacheEntry, Func<ICacheEntry, Task<CoinCapData>>>((key, func) => func(It.IsAny<ICacheEntry>()));
+
+            // Act
+            var result = await _service.GetCurrencyData("bitcoin");
+
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.AreEqual("bitcoin", result.Id);
+            Assert.AreEqual("BTC", result.Symbol);
+            Assert.AreEqual(50000.0M, result.RateUsd);
+
+            // Verify cache miss and HTTP request
+            _memoryCacheMock.Verify(mc => mc.GetOrCreateAsync(It.IsAny<object>(), It.IsAny<Func<ICacheEntry, Task<CoinCapData>>>()), Times.Once);
+            httpMessageHandlerMock.Protected().Verify(
+                "SendAsync",
+                Times.Once(),
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>());
+        }
+    }
+
+    public class CoinCapService
+    {
+        private readonly IMemoryCache memoryCache;
+        private readonly IHttpClientFactory httpClientFactory;
+
+        public CoinCapService(IMemoryCache memoryCache, IHttpClientFactory httpClientFactory)
+        {
+            this.memoryCache = memoryCache;
+            this.httpClientFactory = httpClientFactory;
+        }
+
+        public async Task<CoinCapData> GetCurrencyData(string id)
+        {
+            return (await memoryCache.GetOrCreateAsync(
+                $"{this.GetType().Name}.GetCurrencyData({id})",
+                _ => GetData()))!;
+
+            async Task<CoinCapData> GetData()
+            {
+                using var httpClient = httpClientFactory.CreateClient();
+                var response = await httpClient.GetFromJsonAsync<CoinCapResponse>($"https://api.coincap.io/v2/rates/{id}");
+                return response!.Data;
+            }
+        }
     }
 }
