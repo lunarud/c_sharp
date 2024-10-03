@@ -1,0 +1,104 @@
+using NUnit.Framework;
+using Moq;
+using InMemoryCachingSample.Services;
+using InMemoryCachingSample.Infrastructure;
+using InMemoryCachingSample.Models;
+using InMemoryCachingSample.Utils;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using System;
+
+namespace InMemoryCachingSample.Tests
+{
+    [TestFixture]
+    public class CachedUserServiceTests
+    {
+        private CachedUserService _cachedUserService;
+        private Mock<UsersService> _usersServiceMock;
+        private Mock<ICacheProvider> _cacheProviderMock;
+
+        [SetUp]
+        public void Setup()
+        {
+            // Create mock objects
+            _usersServiceMock = new Mock<UsersService>();
+            _cacheProviderMock = new Mock<ICacheProvider>();
+
+            // Instantiate the CachedUserService with mock dependencies
+            _cachedUserService = new CachedUserService(_usersServiceMock.Object, _cacheProviderMock.Object);
+        }
+
+        [Test]
+        public async Task GetUsers_ReturnsCachedUsers_WhenUsersAreCached()
+        {
+            // Arrange
+            var cachedUsers = new List<User> { new User { Id = 1, Name = "John Doe" } };
+            _cacheProviderMock.Setup(cp => cp.GetFromCache<IEnumerable<User>>(CacheKeys.Users)).Returns(cachedUsers);
+
+            // Act
+            var result = await _cachedUserService.GetUsers();
+
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.AreEqual(cachedUsers, result);
+            _usersServiceMock.Verify(us => us.GetUsersAsync(), Times.Never);
+        }
+
+        [Test]
+        public async Task GetUsers_CallsUsersServiceAndCachesResult_WhenUsersAreNotCached()
+        {
+            // Arrange
+            List<User> cachedUsers = null;
+            var usersFromService = new List<User> { new User { Id = 1, Name = "Jane Doe" } };
+
+            _cacheProviderMock.Setup(cp => cp.GetFromCache<IEnumerable<User>>(CacheKeys.Users)).Returns(cachedUsers);
+            _usersServiceMock.Setup(us => us.GetUsersAsync()).ReturnsAsync(usersFromService);
+
+            // Act
+            var result = await _cachedUserService.GetUsers();
+
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.AreEqual(usersFromService, result);
+            _usersServiceMock.Verify(us => us.GetUsersAsync(), Times.Once);
+            _cacheProviderMock.Verify(cp => cp.SetCache(CacheKeys.Users, usersFromService, It.IsAny<DateTimeOffset>()), Times.Once);
+        }
+
+        [Test]
+        public async Task GetUsersAsync_UsesSemaphoreAndCachesResult_WhenCacheIsEmpty()
+        {
+            // Arrange
+            List<User> cachedUsers = null;
+            var usersFromService = new List<User> { new User { Id = 2, Name = "Alice Doe" } };
+
+            _cacheProviderMock.Setup(cp => cp.GetFromCache<IEnumerable<User>>(CacheKeys.Users)).Returns(cachedUsers);
+            _usersServiceMock.Setup(us => us.GetUsersAsync()).ReturnsAsync(usersFromService);
+
+            // Act
+            var result = await _cachedUserService.GetUsersAsync();
+
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.AreEqual(usersFromService, result);
+            _usersServiceMock.Verify(us => us.GetUsersAsync(), Times.Once);
+            _cacheProviderMock.Verify(cp => cp.SetCache(CacheKeys.Users, usersFromService, It.IsAny<DateTimeOffset>()), Times.Once);
+        }
+
+        [Test]
+        public async Task GetUsersAsync_ReturnsCachedUsersWithoutEnteringSemaphore_WhenUsersAreCached()
+        {
+            // Arrange
+            var cachedUsers = new List<User> { new User { Id = 3, Name = "Bob Doe" } };
+            _cacheProviderMock.Setup(cp => cp.GetFromCache<IEnumerable<User>>(CacheKeys.Users)).Returns(cachedUsers);
+
+            // Act
+            var result = await _cachedUserService.GetUsersAsync();
+
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.AreEqual(cachedUsers, result);
+            _usersServiceMock.Verify(us => us.GetUsersAsync(), Times.Never);
+            _cacheProviderMock.Verify(cp => cp.SetCache(It.IsAny<string>(), It.IsAny<IEnumerable<User>>(), It.IsAny<DateTimeOffset>()), Times.Never);
+        }
+    }
+}
