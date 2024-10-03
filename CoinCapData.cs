@@ -1,3 +1,29 @@
+public async Task<CoinCapData> GetCurrencyData( string id )
+{
+    return
+        (await memoryCache.GetOrCreateAsync(
+            $"{this.GetType().Name}.{id}",
+            async entry =>
+            {
+                entry.SetAbsoluteExpiration( TimeSpan.FromSeconds( 30 ) );
+
+                return await GetData();
+            } ))!;
+
+    async Task<CoinCapData> GetData()
+    {
+        using var httpClient = httpClientFactory.CreateClient();
+
+        var response =
+            await httpClient.GetFromJsonAsync<CoinCapResponse>(
+                $"https://api.coincap.io/v2/rates/{id}" );
+
+        return response!.Data;
+    }
+}
+
+
+
 using Moq;
 using NUnit.Framework;
 using Microsoft.Extensions.Caching.Memory;
