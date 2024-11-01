@@ -4,3 +4,12 @@ versionedRecordSchema.pre('save', function(next) {
     }
     next();
 });
+
+versionedRecordSchema.methods.logAccess = function(action, userId) {
+    this.auditTrail.push({
+        action,
+        userId,
+        timestamp: new Date()
+    });
+    return this.save();
+};
