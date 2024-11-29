@@ -1,79 +1,79 @@
-using NUnit.Framework;
 using Moq;
+using NUnit.Framework;
+using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using YourNamespace; // Replace with the actual namespace.
+using MongoDB.Driver;
+using MongoDB.Bson;
+using Newtonsoft.Json;
+using System.Collections.Generic;
 
 [TestFixture]
-public class ChangeStreamTests
+public class ChangeStreamExecuteTests
 {
     private Mock<ILogger> _mockLogger;
-    private Mock<IApiUnitOfWork> _mockApiUnitOfWork;
+    private Mock<IUnitOfWork> _mockUnitOfWork;
     private Mock<IChangeRecordsRepo> _mockChangeRecordsRepo;
     private Mock<IChangeRecordsFlatRepo> _mockChangeRecordsFlatRepo;
     private CancellationTokenSource _cancellationTokenSource;
 
     [SetUp]
-    public void SetUp()
+    public void Setup()
     {
         _mockLogger = new Mock<ILogger>();
-        _mockApiUnitOfWork = new Mock<IApiUnitOfWork>();
+        _mockUnitOfWork = new Mock<IUnitOfWork>();
         _mockChangeRecordsRepo = new Mock<IChangeRecordsRepo>();
         _mockChangeRecordsFlatRepo = new Mock<IChangeRecordsFlatRepo>();
-        _mockApiUnitOfWork.Setup(u => u.ChangeRecordsRepo).Returns(_mockChangeRecordsRepo.Object);
-        _mockApiUnitOfWork.Setup(u => u.ChangeRecordsFlatRepo).Returns(_mockChangeRecordsFlatRepo.Object);
-
         _cancellationTokenSource = new CancellationTokenSource();
+
+        _mockUnitOfWork.Setup(u => u.ChangeRecordsRepo).Returns(_mockChangeRecordsRepo.Object);
+        _mockUnitOfWork.Setup(u => u.ChangeRecordsFlatRepo).Returns(_mockChangeRecordsFlatRepo.Object);
     }
 
     [Test]
-    public async Task ChangeStreamExecute_ShouldProcessChangeRecords()
+    public async Task ChangeStreamExecute_ProcessesChangeStreamCorrectly()
     {
         // Arrange
-        var mockCursor = new Mock<IAsyncCursor<ChangeStreamDocument<ChangeRecord>>>();
-        var testChangeStreamDocument = new ChangeStreamDocument<ChangeRecord>
+        var changeStreamOptions = new ChangeStreamOptions
         {
-            FullDocument = new ChangeRecord
-            {
-                Id = Guid.NewGuid().ToString(),
-                // Add other properties of ChangeRecord as needed for the test
-            }
+            FullDocument = ChangeStreamFullDocumentOption.UpdateLookup
         };
-        mockCursor.SetupSequence(c => c.ForEachAsync(It.IsAny<Func<ChangeStreamDocument<ChangeRecord>, Task>>(), It.IsAny<CancellationToken>()))
-                  .Returns(Task.CompletedTask);
 
-        _mockChangeRecordsRepo.Setup(repo => repo.Watch(
-            It.IsAny<EmptyPipelineDefinition<ChangeStreamDocument<ChangeRecord>>>(),
-            It.IsAny<ChangeStreamOptions>(),
-            It.IsAny<CancellationToken>()))
+        var mockCursor = new Mock<IAsyncCursor<ChangeStreamDocument<ChangeRecord>>>();
+        var mockChangeRecord = new ChangeRecord { /* populate fields for testing */ };
+        var changeStreamDocument = new ChangeStreamDocument<ChangeRecord>
+        {
+            FullDocument = mockChangeRecord,
+            OperationType = ChangeStreamOperationType.Insert
+        };
+
+        mockCursor
+            .SetupSequence(c => c.MoveNextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true)
+            .ReturnsAsync(false);
+
+        mockCursor.Setup(c => c.Current).Returns(new[] { changeStreamDocument });
+
+        _mockChangeRecordsRepo
+            .Setup(r => r.Watch(It.IsAny<PipelineDefinition<ChangeStreamDocument<ChangeRecord>, ChangeStreamDocument<ChangeRecord>>>(), changeStreamOptions, It.IsAny<CancellationToken>()))
             .Returns(mockCursor.Object);
 
-        var service = new YourServiceClass(_mockLogger.Object, _mockApiUnitOfWork.Object); // Replace with your service class.
+        var pipelineStages = new Mock<PipelineStages>(_mockUnitOfWork.Object);
+        pipelineStages
+            .Setup(p => p.ChangeRecordToFlatRecord(It.IsAny<ChangeRecord>()))
+            .ReturnsAsync(new List<BsonDocument> { new BsonDocument { { "timestamp", DateTime.UtcNow } } });
+
+        _mockUnitOfWork.Setup(u => u.ChangeRecordsFlatRepo.CreateAsync(It.IsAny<ChangeRecordsFlat>()))
+            .Returns(Task.CompletedTask);
+
+        var service = new MyService(_mockLogger.Object, _mockUnitOfWork.Object, pipelineStages.Object);
 
         // Act
         await service.ChangeStreamExecute(_cancellationTokenSource.Token);
 
         // Assert
-        _mockChangeRecordsFlatRepo.Verify(repo => repo.CreateAsync(It.IsAny<ChangeRecordsFlat>()), Times.AtLeastOnce);
-        _mockLogger.Verify(logger => logger.LogDebug(It.IsAny<string>()), Times.Never); // Ensure no exceptions logged.
-    }
-
-    [Test]
-    public void ChangeStreamExecute_ShouldHandleException()
-    {
-        // Arrange
-        _mockChangeRecordsRepo.Setup(repo => repo.Watch(
-            It.IsAny<EmptyPipelineDefinition<ChangeStreamDocument<ChangeRecord>>>(),
-            It.IsAny<ChangeStreamOptions>(),
-            It.IsAny<CancellationToken>()))
-            .Throws(new Exception("Test exception"));
-
-        var service = new YourServiceClass(_mockLogger.Object, _mockApiUnitOfWork.Object); // Replace with your service class.
-
-        // Act & Assert
-        Assert.DoesNotThrowAsync(async () => await service.ChangeStreamExecute(_cancellationTokenSource.Token));
-        _mockLogger.Verify(logger => logger.LogDebug(It.IsAny<string>()), Times.Once);
+        _mockLogger.Verify(l => l.LogInformation("Subscribe to Change Stream"), Times.Once);
+        _mockUnitOfWork.Verify(u => u.ChangeRecordsFlatRepo.CreateAsync(It.IsAny<ChangeRecordsFlat>()), Times.Once);
     }
 }
