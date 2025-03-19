@@ -1,3 +1,47 @@
+public class CustomChangeStreamDocument<T>
+{
+    public ChangeStreamOperationType OperationType { get; set; }
+    public T FullDocument { get; set; }
+    public BsonDocument DocumentKey { get; set; }
+    public BsonTimestamp ClusterTime { get; set; }
+    public CollectionNamespace CollectionNamespace { get; set; }
+    public BsonDocument ResumeToken { get; set; }
+    public ChangeStreamUpdateDescription UpdateDescription { get; set; }
+
+    public CustomChangeStreamDocument(
+        ChangeStreamOperationType operationType,
+        T fullDocument,
+        BsonDocument documentKey,
+        BsonTimestamp clusterTime,
+        CollectionNamespace collectionNamespace,
+        BsonDocument resumeToken,
+        ChangeStreamUpdateDescription updateDescription)
+    {
+        OperationType = operationType;
+        FullDocument = fullDocument;
+        DocumentKey = documentKey;
+        ClusterTime = clusterTime;
+        CollectionNamespace = collectionNamespace;
+        ResumeToken = resumeToken;
+        UpdateDescription = updateDescription;
+    }
+}
+
+// Usage
+var changeDocument = new CustomChangeStreamDocument<MyDocument>(
+    operationType: ChangeStreamOperationType.Insert,
+    fullDocument: new MyDocument { Id = "1", Name = "Test" },
+    documentKey: new BsonDocument("_id", "1"),
+    clusterTime: new BsonTimestamp(1),
+    collectionNamespace: new CollectionNamespace("test", "mydocs"),
+    resumeToken: new BsonDocument("token", "resume"),
+    updateDescription: null);
+
+public class MyDocument
+{
+    public string Id { get; set; }
+    public string Name { get; set; }
+}
 using MongoDB.Driver;
 using MongoDB.Bson;
 
