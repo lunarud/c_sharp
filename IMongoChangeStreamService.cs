@@ -1,4 +1,32 @@
 using MongoDB.Driver;
+using MongoDB.Bson;
+
+var client = new MongoClient("mongodb://localhost:27017");
+var database = client.GetDatabase("test");
+var collection = database.GetCollection<MyDocument>("mydocs");
+
+var pipeline = new EmptyPipelineDefinition<ChangeStreamDocument<MyDocument>>()
+    .Match("{ operationType: 'insert' }");
+
+using (var cursor = collection.Watch(pipeline))
+{
+    while (cursor.MoveNext())
+    {
+        foreach (var change in cursor.Current)
+        {
+            Console.WriteLine($"Operation: {change.OperationType}");
+            Console.WriteLine($"Document: {change.FullDocument.Name}");
+        }
+    }
+}
+
+public class MyDocument
+{
+    public string Id { get; set; }
+    public string Name { get; set; }
+}
+
+using MongoDB.Driver;
 using System.Threading;
 using System.Threading.Tasks;
 
