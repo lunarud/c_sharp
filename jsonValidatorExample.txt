@@ -1,0 +1,54 @@
+var schema = """
+{
+    "type": "object",
+    "required": ["name", "address", "contacts"],
+    "properties": {
+        "name": { "type": "string" },
+        "age": { "type": "integer" },
+        "address": {
+            "type": "object",
+            "required": ["street", "city"],
+            "properties": {
+                "street": { "type": "string" },
+                "city": { "type": "string" },
+                "zip": { "type": "string" }
+            }
+        },
+        "contacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                    "email": { "type": "string" },
+                    "phone": { "type": "string" }
+                }
+            }
+        }
+    }
+}
+""";
+
+var data = """
+{
+    "name": "John",
+    "address": {
+        "street": "123 Main"
+    }
+}
+""";
+
+var validator = new JsonSchemaValidator();
+var result = validator.Validate(data, schema);
+
+Console.WriteLine($"Valid: {result.IsValid}");
+Console.WriteLine("Missing paths:");
+result.MissingPaths.ForEach(p => Console.WriteLine($"  - {p}"));
+```
+
+**Output:**
+```
+Valid: False
+Missing paths:
+  - address.city
+  - contacts
