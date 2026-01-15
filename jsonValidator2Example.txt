@@ -1,0 +1,25 @@
+string schemaJson = @"
+{
+  ""type"": ""object"",
+  ""properties"": {
+    ""name"": { ""type"": ""string"" },
+    ""address"": {
+      ""type"": ""object"",
+      ""properties"": {
+        ""street"": { ""type"": ""string"" },
+        ""city"": { ""type"": ""string"" }
+      },
+      ""required"": [""street"", ""city""]
+    }
+  },
+  ""required"": [""name"", ""address""]
+}";
+
+string dataJson = @"
+{
+  ""name"": ""John""
+}";
+
+JsonValidator validator = new JsonValidator();
+List<string> missing = validator.ValidateAndGetMissingLeafLevels(schemaJson, dataJson);
+// Output: ["address.street", "address.city"] (since "address" is missing, its required leaves are reported)
